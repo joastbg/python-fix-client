@@ -17,9 +17,7 @@
 import asyncore, socket
 import os
 import datetime
-
-HOST = '192.168.0.13'    # The remote host
-PORT = 1234	             # The same port as used by the server
+from optparse import OptionParser
 
 SOH = '\x01'
 
@@ -216,17 +214,21 @@ def logon_message():
 	return pack(msgs)
 
 def main():
-	
-	msgs = {}
-	msgs['SendingTime'] = current_datetime()
-	msgs['SenderCompID'] = "BANZAI"
-	msgs['TargetCompID'] = "FIXIMULATOR"
-	msgs['MsgSeqNum'] = 12
-	msgs['EncryptMethod'] = 0
-	msgs['MsgType'] = 'Logon'
-	msgs['HeartBtInt'] = 30
+
+	# Command line args
+	usage = "usage: %prog [options] arg"
+	parser = OptionParser(usage)
+	parser.add_option("-s", "--server", dest="server", help="FIX server to connect to")
+	parser.add_option("-p", "--port", dest="port", help="FIX server port")
 		
-	client = FIXClient(HOST, PORT)
+	(options, args) = parser.parse_args()
+
+	if options.server == None and options.port == None:
+		print "invalid arguments"
+		exit(1)
+	
+	# Start FIX client
+	client = FIXClient(options.server, int(options.port))
   	asyncore.loop()
 
 if __name__ == "__main__":
