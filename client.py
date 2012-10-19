@@ -17,6 +17,7 @@
 import asyncore, socket
 import os
 import datetime
+import time
 from optparse import OptionParser
 
 SOH = '\x01'
@@ -75,31 +76,44 @@ HEADER = [
 	'SendingTime',
 ]
 
-class FIXClient(asyncore.dispatcher):
+class FIXclient(asyncore.dispatcher):
 
     def __init__(self, host, port):
+		self.host = host
+		self.port = port
 		asyncore.dispatcher.__init__(self)
 		self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.connect((host, port))
-		self.buffer = logon_message() + '\x00'
+		self.buffer = logon_message()
 
     def handle_connect(self):
-		self.send(self.buffer)
+		# connection succeeded
+		#self.send(self.buffer)
 		pass
 
     def handle_close(self):
-        self.close()
-
+		self.close()
+		print 'Connection closed, reconnecting...'
+		time.sleep(5)
+		self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.connect((self.host, self.port))
+	
     def handle_read(self):
 		print "----------INBOUND----------"
 		msg = self.recv(8192)
-		parse(msg)
-
+		msgs = parse(msg)
+		print msgs
+		if msgs['MsgType'] == 'HeartBeat':
+			self.buffer = heartbt_message() 
+			#self.send(self.buffer)
+	
     def writable(self):
         return (len(self.buffer) > 0)
 
 	def handl_expt(self):
-		self.handle_error()
+		# connection failed
+		print 'exception'
+		#self.handle_error()
 
 	def handle_error(self):
 		print "Error"
@@ -109,6 +123,7 @@ class FIXClient(asyncore.dispatcher):
 		parse(self.buffer)
 		sent = self.send(self.buffer)
 		self.buffer = self.buffer[sent:]
+		print 'REST: ', len(self.buffer)
 		pass
 
 def current_datetime():
@@ -146,17 +161,10 @@ def pack(msgs):
 	else:
 		body.append("%i=%s" % (TAGSR['SendingTime'], msgs['SendingTime']))
 
-	if 'EncryptMethod' not in msgs:
-		print 'ERROR'
-		return
-	else:
+	if 'EncryptMethod' in msgs:
 		body.append("%i=%s" % (TAGSR['EncryptMethod'], msgs['EncryptMethod']))
 
-
-	if 'HeartBtInt' not in msgs:
-		print 'ERROR'
-		return
-	else:
+	if 'HeartBtInt' in msgs:
 		body.append("%i=%s" % (TAGSR['HeartBtInt'], msgs['HeartBtInt']))
 
 	# Enable easy change when debugging
@@ -167,13 +175,18 @@ def pack(msgs):
 	# Create header
 	header = []
 	header.append("%s=%s" % (TAGSR['BeginString'], 'FIX.4.2'))
-	header.append("%s=%i" % (TAGSR['BodyLength'], len(body)))
+	header.append("%s=%i" % (TAGSR['BodyLength'], len(body) + 5))
 	header.append("%s=%s" % (TAGSR['MsgType'],  MSGTYPESR[msgs['MsgType']]))
 
 	fixmsg = SEP.join(header) + SEP + body
 	cksum = sum([ord(i) for i in list(fixmsg)]) % 256
-	fixmsg = fixmsg + "%i=0%s" % (TAGSR['CheckSum'], cksum)
 	
+	if cksum < 10:
+		fixmsg = fixmsg + "%i=00%s" % (TAGSR['CheckSum'], cksum)
+	elif cksum < 100:
+		fixmsg = fixmsg + "%i=0%s" % (TAGSR['CheckSum'], cksum)
+	else:
+		fixmsg = fixmsg + "%i=%s" % (TAGSR['CheckSum'], cksum)
 	return fixmsg + SEP
 	
 def parse(rawmsg):
@@ -201,13 +214,24 @@ def parse(rawmsg):
 				print "MsgType\t\t%s" % msgs[t]
 			else:
 				msgs[t] = value
+	return msgs
+
+def heartbt_message():
+	msgs = {}
+	msgs['SendingTime'] = current_datetime()
+	msgs['SenderCompID'] = "BANZAI"
+	msgs['TargetCompID'] = "FIXIMULATOR"
+	msgs['MsgSeqNum'] = 5
+	msgs['MsgType'] = 'HeartBeat'
+	#msgs['HeartBtInt'] = 30
+	return pack(msgs)
 
 def logon_message():
 	msgs = {}
 	msgs['SendingTime'] = current_datetime()
 	msgs['SenderCompID'] = "BANZAI"
 	msgs['TargetCompID'] = "FIXIMULATOR"
-	msgs['MsgSeqNum'] = 12
+	msgs['MsgSeqNum'] = 4
 	msgs['EncryptMethod'] = 0
 	msgs['MsgType'] = 'Logon'
 	msgs['HeartBtInt'] = 30
@@ -226,9 +250,9 @@ def main():
 	if options.server == None and options.port == None:
 		print "invalid arguments"
 		exit(1)
-	
+
 	# Start FIX client
-	client = FIXClient(options.server, int(options.port))
+	client = FIXclient(options.server, int(options.port))
   	asyncore.loop()
 
 if __name__ == "__main__":
